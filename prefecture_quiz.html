@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>都道府県クイズ</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#1a2a4a;color:#eee;font-family:'Hiragino Kaku Gothic Pro','メイリオ',sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:8px;overflow-x:hidden}
+h1{font-size:1.2rem;letter-spacing:3px;color:#ffd700;margin-bottom:5px;text-shadow:0 0 10px rgba(255,215,0,.5)}
+#scorebar{display:flex;gap:10px;align-items:center;margin-bottom:4px;font-size:.85rem}
+#scorebar span{background:#0d1f3c;border:1px solid #4a7ab5;border-radius:6px;padding:3px 10px;color:#7ec8e3}
+#scorebar strong{color:#ffd700}
+#hint{font-size:.7rem;color:#7ec8e3;margin-bottom:4px;opacity:.7}
+#map-container{position:relative;width:100%;max-width:600px;touch-action:none;cursor:grab;background:#cde8f5;border:2px solid #4a7ab5;border-radius:8px;overflow:hidden}
+#map-container:active{cursor:grabbing}
+#map-svg{display:block;width:100%;height:auto}
+.pref{stroke:#fff;stroke-width:0.5;cursor:pointer;transition:fill .15s}
+.pref:hover{opacity:.75}
+.pref.correct{fill:#ffd700!important;stroke:#b8860b!important}
+.pref.wrong{fill:#888!important;stroke:#666!important}
+.pref.answered{pointer-events:none}
+/* 沖縄インセット */
+#okinawa-box{position:absolute;bottom:8px;right:8px;background:#cde8f5;border:1.5px dashed #555;border-radius:4px;padding:3px}
+#okinawa-svg{display:block}
+#loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#cde8f5;font-size:1rem;color:#1a3a5c;font-weight:bold;border-radius:6px}
+/* クイズ */
+#quiz-popup{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:100;align-items:center;justify-content:center}
+#quiz-box{background:#0d1f3c;border:2px solid #ffd700;border-radius:14px;padding:20px;max-width:340px;width:90%;text-align:center}
+#quiz-question{font-size:.95rem;margin-bottom:14px;color:#7ec8e3;line-height:1.5}
+#quiz-choices{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.choice-btn{padding:12px 6px;background:#1a3a5c;border:2px solid #4a7ab5;border-radius:10px;color:#eee;font-size:.88rem;cursor:pointer}
+.choice-btn:hover{background:#2a5a8c}
+.choice-btn.correct-ans{background:#2d8a4e;border-color:#4caf50;color:#fff}
+.choice-btn.wrong-ans{background:#8a2d2d;border-color:#f44336;color:#fff}
+/* 結果 */
+#result-screen{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:200;overflow-y:auto;padding:20px}
+#result-box{background:#0d1f3c;border:2px solid #4a7ab5;border-radius:16px;padding:24px;max-width:400px;width:95%;margin:auto;text-align:center}
+#result-box h2{font-size:1.4rem;color:#ffd700;margin-bottom:10px}
+.wrong-item{font-size:.8rem;background:#1a3a5c;border-radius:4px;padding:4px 8px;margin:3px 0;color:#ffa0a0;text-align:left}
+.rank-item{display:flex;justify-content:space-between;font-size:.8rem;background:#1a3a5c;border-radius:4px;padding:4px 8px;margin:3px 0}
+.rank-item span:last-child{color:#ffa0a0}
+#retry-btn{margin-top:16px;padding:12px 32px;background:#ffd700;border:none;border-radius:10px;color:#000;font-size:1rem;font-weight:bold;cursor:pointer}
+@keyframes hanko-in{0%{transform:rotate(-15deg) scale(3);opacity:0}60%{transform:rotate(-15deg) scale(.9)}100%{transform:rotate(-15deg) scale(1);opacity:1}}
+.hanko-anim{animation:hanko-in .5s ease-out forwards}
+#confetti-canvas{display:none;position:fixed;inset:0;pointer-events:none;z-index:300}
+</style>
+</head>
+<body>
+<h1>🗾 都道府県クイズ</h1>
+<div id="scorebar">
+  <span>正解: <strong id="correct-count">0</strong> / <span id="total-count">47</span></span>
+  <span>間違い: <strong id="wrong-count">0</strong></span>
+</div>
+<div id="hint">📱 ピンチ/スクロールで拡大・ドラッグで移動</div>
+<div id="map-container">
+  <svg id="map-svg" viewBox="0 0 600 620"></svg>
+  <div id="okinawa-box">
+    <svg id="okinawa-svg" width="100" height="70" viewBox="0 0 100 70"></svg>
+  </div>
+  <div id="loading">地図を読み込み中...</div>
+</div>
+
+<div id="quiz-popup">
+  <div id="quiz-box">
+    <div id="quiz-question"></div>
+    <div id="quiz-choices"></div>
+  </div>
+</div>
+<div id="result-screen">
+  <div id="result-box">
+    <h2 id="result-title">結果発表！</h2>
+    <div id="result-score-text"></div>
+    <div id="hanko"></div>
+    <div id="wrong-list"></div>
+    <div id="ranking-section" style="margin-top:14px;text-align:left"></div>
+    <button id="retry-btn" onclick="resetGame()">もう一度チャレンジ</button>
+  </div>
+</div>
+<canvas id="confetti-canvas"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<script>
+// 都道府県データ（JIS X 0401 コード順）
+const PREFS = [
+  {id:1,name:"北海道"},{id:2,name:"青森県"},{id:3,name:"岩手県"},{id:4,name:"宮城県"},
+  {id:5,name:"秋田県"},{id:6,name:"山形県"},{id:7,name:"福島県"},{id:8,name:"茨城県"},
+  {id:9,name:"栃木県"},{id:10,name:"群馬県"},{id:11,name:"埼玉県"},{id:12,name:"千葉県"},
+  {id:13,name:"東京都"},{id:14,name:"神奈川県"},{id:15,name:"新潟県"},{id:16,name:"富山県"},
+  {id:17,name:"石川県"},{id:18,name:"福井県"},{id:19,name:"山梨県"},{id:20,name:"長野県"},
+  {id:21,name:"岐阜県"},{id:22,name:"静岡県"},{id:23,name:"愛知県"},{id:24,name:"三重県"},
+  {id:25,name:"滋賀県"},{id:26,name:"京都府"},{id:27,name:"大阪府"},{id:28,name:"兵庫県"},
+  {id:29,name:"奈良県"},{id:30,name:"和歌山県"},{id:31,name:"鳥取県"},{id:32,name:"島根県"},
+  {id:33,name:"岡山県"},{id:34,name:"広島県"},{id:35,name:"山口県"},{id:36,name:"徳島県"},
+  {id:37,name:"香川県"},{id:38,name:"愛媛県"},{id:39,name:"高知県"},{id:40,name:"福岡県"},
+  {id:41,name:"佐賀県"},{id:42,name:"長崎県"},{id:43,name:"熊本県"},{id:44,name:"大分県"},
+  {id:45,name:"宮崎県"},{id:46,name:"鹿児島県"},{id:47,name:"沖縄県"}
+];
+const TOTAL = PREFS.length;
+document.getElementById('total-count').textContent = TOTAL;
+
+function regionColor(id) {
+  if (id === 1) return '#e87dae';
+  if (id <= 7)  return '#5ab4de';
+  if (id <= 14) return '#76c442';
+  if (id <= 24) return '#f0a840';
+  if (id <= 30) return '#e05050';
+  if (id <= 35) return '#e8a838';
+  if (id <= 39) return '#40c0a0';
+  return '#6080d0';
+}
+
+let state = {answered:{}, wrongHistory:[], correctCount:0, wrongCount:0};
+let prefElems = {}; // id -> SVG element
+
+function loadMistakes(){try{return JSON.parse(localStorage.getItem('pref_mistakes')||'{}')}catch(e){return{}}}
+function saveMistakes(m){try{localStorage.setItem('pref_mistakes',JSON.stringify(m))}catch(e){}}
+
+// ===== 地図描画 =====
+const W=600, H=620;
+const svg = d3.select('#map-svg').attr('viewBox',`0 0 ${W} ${H}`);
+
+// メイン地図：北海道〜九州
+const proj = d3.geoMercator().center([136.5,37]).scale(1550).translate([W*0.54,H*0.47]);
+const pathGen = d3.geoPath().projection(proj);
+
+// 沖縄インセット用
+const oki_svg = d3.select('#okinawa-svg');
+const oki_proj = d3.geoMercator().center([127.8,26.3]).scale(1200).translate([50,35]);
+const oki_path = d3.geoPath().projection(oki_proj);
+
+d3.json('https://raw.githubusercontent.com/dataofjapan/land/master/japan.topojson')
+  .then(topo => {
+    document.getElementById('loading').style.display='none';
+    const features = topojson.feature(topo, topo.objects.japan).features;
+
+    features.forEach(f => {
+      const id = f.properties.id;
+      const isOkinawa = (id === 47);
+      const target = isOkinawa ? oki_svg : svg;
+      const gen    = isOkinawa ? oki_path : pathGen;
+
+      const el = target.append('path')
+        .datum(f)
+        .attr('d', gen)
+        .attr('class','pref')
+        .attr('fill', regionColor(id))
+        .attr('data-id', id)
+        .on('click', () => showQuiz(id));
+
+      prefElems[id] = el.node();
+    });
+  })
+  .catch(() => {
+    document.getElementById('loading').textContent='読み込みエラー。ネット接続を確認してください。';
+  });
+
+// ===== クイズ =====
+function showQuiz(prefId) {
+  if(state.answered[prefId]) return;
+  const pref = PREFS.find(p=>p.id===prefId);
+  if(!pref) return;
+
+  const others = PREFS.filter(p=>p.id!==prefId).sort(()=>Math.random()-.5).slice(0,3);
+  const choices = [pref,...others].sort(()=>Math.random()-.5);
+
+  document.getElementById('quiz-question').innerHTML=
+    `<b style="color:#ffd700;font-size:1.05rem">この都道府県はどこ？</b><br>
+     <small style="color:#aaa">オレンジに光った場所の名前を選ぼう！</small>`;
+
+  const box=document.getElementById('quiz-choices');
+  box.innerHTML='';
+  choices.forEach(c=>{
+    const btn=document.createElement('button');
+    btn.className='choice-btn'; btn.textContent=c.name;
+    btn.onclick=()=>answerQuiz(c.id===prefId,prefId,btn,pref.name);
+    box.appendChild(btn);
+  });
+
+  if(prefElems[prefId]) prefElems[prefId].style.fill='#ff9800';
+  document.getElementById('quiz-popup').style.display='flex';
+}
+
+function answerQuiz(correct,prefId,btn,correctName){
+  document.querySelectorAll('.choice-btn').forEach(b=>b.disabled=true);
+  const el = prefElems[prefId];
+
+  if(correct){
+    btn.classList.add('correct-ans');
+    state.answered[prefId]='correct'; state.correctCount++;
+    if(el){el.style.fill='';el.classList.add('correct','answered');}
+    document.getElementById('correct-count').textContent=state.correctCount;
+  } else {
+    btn.classList.add('wrong-ans');
+    state.answered[prefId]='wrong'; state.wrongCount++;
+    state.wrongHistory.push(PREFS.find(p=>p.id===prefId));
+    document.querySelectorAll('.choice-btn').forEach(b=>{if(b.textContent===correctName)b.classList.add('correct-ans');});
+    if(el){el.style.fill='';el.classList.add('wrong','answered');}
+    document.getElementById('wrong-count').textContent=state.wrongCount;
+    const m=loadMistakes(); m[prefId]=(m[prefId]||0)+1; saveMistakes(m);
+  }
+  setTimeout(()=>{
+    document.getElementById('quiz-popup').style.display='none';
+    if(Object.keys(state.answered).length>=TOTAL) showResult();
+  },1200);
+}
+
+function resetGame(){
+  state={answered:{},wrongHistory:[],correctCount:0,wrongCount:0};
+  Object.values(prefElems).forEach(el=>{
+    if(!el) return;
+    el.style.fill='';
+    el.classList.remove('correct','wrong','answered');
+    el.style.fill=regionColor(parseInt(el.dataset.id));
+  });
+  document.getElementById('correct-count').textContent='0';
+  document.getElementById('wrong-count').textContent='0';
+  document.getElementById('result-screen').style.display='none';
+  document.getElementById('quiz-popup').style.display='none';
+  document.getElementById('confetti-canvas').style.display='none';
+}
+
+function showResult(){
+  const pct=Math.round(state.correctCount/TOTAL*100);
+  const screen=document.getElementById('result-screen');
+  screen.style.display='flex'; screen.style.alignItems='flex-start';
+  document.getElementById('result-score-text').innerHTML=
+    `<span style="font-size:2.2rem;color:#ffd700;font-weight:bold">${state.correctCount}/${TOTAL}</span><br>
+     <span style="color:#aaa;font-size:1rem">正解率 ${pct}%</span>`;
+  const hanko=document.getElementById('hanko');
+  hanko.className='hanko-anim';
+  if(pct===100){hanko.innerHTML='<span style="font-size:3rem">🎊🎉🎊</span>';hanko.style.transform='none';startConfetti();}
+  else if(pct>=90) hanko.innerHTML='<span style="font-size:4rem;color:#e53935;border:5px solid #e53935;border-radius:50%;padding:8px 14px;font-family:serif;font-weight:bold;display:inline-block;transform:rotate(-15deg)">優</span>';
+  else if(pct>=80) hanko.innerHTML='<span style="font-size:4rem;color:#1565c0;border:5px solid #1565c0;border-radius:50%;padding:8px 14px;font-family:serif;font-weight:bold;display:inline-block;transform:rotate(-15deg)">良</span>';
+  else if(pct>=70) hanko.innerHTML='<span style="font-size:4rem;color:#2e7d32;border:5px solid #2e7d32;border-radius:50%;padding:8px 14px;font-family:serif;font-weight:bold;display:inline-block;transform:rotate(-15deg)">可</span>';
+  else hanko.innerHTML='';
+  document.getElementById('wrong-list').innerHTML=state.wrongHistory.length>0
+    ?'<h3 style="font-size:.9rem;color:#7ec8e3;margin-bottom:6px;text-align:left">❌ 間違えた都道府県</h3>'+state.wrongHistory.map(p=>`<div class="wrong-item">${p.name}</div>`).join('')
+    :'<p style="color:#4caf50;margin-top:8px">間違いゼロ！完璧！🎉</p>';
+  const mistakes=loadMistakes();
+  const ranked=Object.entries(mistakes).map(([id,cnt])=>({name:PREFS.find(p=>p.id==id)?.name||'?',cnt})).sort((a,b)=>b.cnt-a.cnt).slice(0,5);
+  document.getElementById('ranking-section').innerHTML=ranked.length>0
+    ?'<h3 style="font-size:.9rem;color:#7ec8e3;margin-bottom:6px">📊 間違いやすいランキング（累計）</h3>'+ranked.map((r,i)=>`<div class="rank-item"><span>${i+1}位 ${r.name}</span><span>${r.cnt}回ミス</span></div>`).join('')
+    :'';
+}
+
+// ===== ズーム・ドラッグ =====
+const container=document.getElementById('map-container');
+const mapSvg=document.getElementById('map-svg');
+let vb={x:0,y:0,w:W,h:H}, drag=null, lastTouches=null;
+function setVB(){mapSvg.setAttribute('viewBox',`${vb.x} ${vb.y} ${vb.w} ${vb.h}`);}
+function zoom(cx,cy,f){
+  const nw=Math.max(150,Math.min(W,vb.w*f)), nh=Math.max(150,Math.min(H,vb.h*f));
+  const r=mapSvg.getBoundingClientRect(), rx=(cx-r.left)/r.width, ry=(cy-r.top)/r.height;
+  vb.x+=(vb.w-nw)*rx; vb.y+=(vb.h-nh)*ry; vb.w=nw; vb.h=nh; setVB();
+}
+container.addEventListener('wheel',e=>{e.preventDefault();zoom(e.clientX,e.clientY,e.deltaY>0?1.15:.87);},{passive:false});
+container.addEventListener('mousedown',e=>{if(e.target.classList.contains('pref'))return;drag={sx:e.clientX,sy:e.clientY,vx:vb.x,vy:vb.y};});
+window.addEventListener('mousemove',e=>{if(!drag)return;const r=mapSvg.getBoundingClientRect();vb.x=drag.vx-(e.clientX-drag.sx)*(vb.w/r.width);vb.y=drag.vy-(e.clientY-drag.sy)*(vb.h/r.height);setVB();});
+window.addEventListener('mouseup',()=>drag=null);
+container.addEventListener('touchstart',e=>{
+  if(e.touches.length===1&&e.target.classList.contains('pref'))return;
+  if(e.touches.length===1)drag={sx:e.touches[0].clientX,sy:e.touches[0].clientY,vx:vb.x,vy:vb.y};
+  if(e.touches.length===2){drag=null;lastTouches=e.touches;}
+},{passive:true});
+container.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(e.touches.length===1&&drag){const r=mapSvg.getBoundingClientRect();vb.x=drag.vx-(e.touches[0].clientX-drag.sx)*(vb.w/r.width);vb.y=drag.vy-(e.touches[0].clientY-drag.sy)*(vb.h/r.height);setVB();}
+  if(e.touches.length===2&&lastTouches){
+    const d1=Math.hypot(lastTouches[0].clientX-lastTouches[1].clientX,lastTouches[0].clientY-lastTouches[1].clientY);
+    const d2=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+    if(d1>0)zoom((e.touches[0].clientX+e.touches[1].clientX)/2,(e.touches[0].clientY+e.touches[1].clientY)/2,d1/d2);
+    lastTouches=e.touches;
+  }
+},{passive:false});
+container.addEventListener('touchend',()=>{drag=null;lastTouches=null;});
+
+// ===== 紙吹雪 =====
+function startConfetti(){
+  const canvas=document.getElementById('confetti-canvas');
+  canvas.style.display='block'; canvas.width=window.innerWidth; canvas.height=window.innerHeight;
+  const ctx=canvas.getContext('2d'), colors=['#ffd700','#ff6b6b','#4ecdc4','#45b7d1','#96ceb4','#ff9ff3'];
+  const pieces=Array.from({length:120},()=>({x:Math.random()*canvas.width,y:Math.random()*-canvas.height,r:Math.random()*6+3,d:Math.random()*4+2,color:colors[Math.floor(Math.random()*colors.length)],ta:0,ts:Math.random()*.1+.05}));
+  let f=0;
+  (function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    pieces.forEach(p=>{p.ta+=p.ts;p.y+=p.d;p.x+=Math.sin(p.ta)*1.5;ctx.beginPath();ctx.fillStyle=p.color;ctx.ellipse(p.x,p.y,p.r,p.r*.5,Math.sin(p.ta)*.2,0,Math.PI*2);ctx.fill();});
+    if(++f<300)requestAnimationFrame(draw);
+    else{ctx.clearRect(0,0,canvas.width,canvas.height);canvas.style.display='none';}
+  })();
+}
+</script>
+</body>
+</html>
